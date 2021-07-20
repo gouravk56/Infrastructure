@@ -1,0 +1,105 @@
+---
+- hosts: localhost
+  name: Provisioning AWS infrastructure
+  gather_facts: yes
+  tasks:
+  - name: Lets create AWS VPC
+    ec2_vpc_net:
+     name: "Gourav-VPC"
+     state: present
+     cidr_block: 172.31.32.0/26
+     region: us-east-1
+     tags:
+       Name: "Gourav-Infrastructure"
+    register: aws_vpc
+
+  - debug:
+      msg: '{{aws_vpc.vpc.id}}'
+
+  - name: Lets create subnets
+    ec2_vpc_subnet:
+      state: present
+      vpc_id: '{{aws_vpc.vpc.id}}'
+      cidr:  '{{ item.cidr }}'
+      tags:
+        Name: '{{ item.Name }}'
+      region: us-east-1
+      az: us-east-1a
+    register:  aws_subnet
+    loop:
+     - cidr: 172.31.32.0/27
+       Name: "Gourav-public"
+     - cidr: 172.31.32.32/27
+       Name: "Gourav-private"
+
+
+  - name: Create IGW
+    ec2_vpc_igw:
+      region: us-east-1
+      vpc_id: '{{aws_vpc.vpc.id}}'
+      state: present
+    register: igw
+    tags: ig
+	 - debug:
+      msg: '{{ aws_subnet.results[1].subnet.id }}'
+  - name: Create NAT
+    ec2_vpc_nat_gateway:
+       state: present
+       subnet_id: '{{ aws_subnet.results[1].subnet.id }}'
+       wait: true
+       region: us-east-1
+    register: aws_nat_gateway
+  - debug:
+       msg: '{{ aws_nat_gateway }}'
+  - debug:
+       msg: '{{ igw }}'
+
+  - name: Set-up route table
+    ec2_vpc_route_table:
+        vpc_id: '{{aws_vpc.vpc.id}}'
+        region: us-east-1
+        subnets:
+           - '{{ item.subnet_id }}'
+        routes:
+           - dest: '{{ item.dest }}'
+             gateway_id: '{{ item.gateway_id }}'
+    register: public_route
+    loop:
+      - subnet_id: '{{ aws_subnet.results[0].subnet.id }}'
+        dest: 0.0.0.0/0
+        gateway_id: '{{ igw.gateway_id }}'
+      - subnet_id: '{{ aws_subnet.results[1].subnet.id }}'
+        dest: 0.0.0.0/0
+        gateway_id: '{{ aws_nat_gateway.nat_gateway_id }}'
+    - name: Create simple security group
+    ec2_group:
+      name: webservers
+      description: A security group for my current IP
+      region: us-west-2
+      tags:
+        Name: "My-Security-Group"
+      rules:
+        - proto: tcp
+          from_port: 80
+          to_port: 80
+          cidr_ip: "172.31.32.0/26"
+        - proto: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: "172.31.32.0/26"
+      rules_egress:
+        - proto: All
+          from_port: -1
+          to_port: -1
+          cidr_ip: 0.0.0.0/0
+    register: webservers_group
+
+  - name: Create LC
+    ec2_lc:
+      name: My-LC
+      security_groups: ['{{webservers_group.group_id}}']
+      image_id: ami-059e7d63c77f07a71
+    register: launch_config
+
+                                                              
+                                                                                                 
